@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI & Synth Chord Analyzer</title>
+    <!-- ライブラリ読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tonaljs/tonal/browser/tonal.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #eee; padding: 20px; }
+        .container { max-width: 960px; margin: 0 auto; }
+        .panel { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #333; }
+        
+        select { background: #2a2a2a; color: #fff; border: 1px solid #555; padding: 6px 10px; border-radius: 4px; font-size: 14px; width: 100%; }
+        
+        .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+        .control-group { display: flex; flex-direction: column; font-size: 12px; }
+        
+        /* 鍵盤UI */
+        .keyboard { position: relative; height: 110px; display: flex; user-select: none; margin-top: 10px; }
+        .key { border: 1px solid #000; box-sizing: border-box; cursor: pointer; text-align: center; font-size: 10px; padding-top: 75px; }
+        .key.white { background: #fff; color: #000; width: 36px; height: 110px; z-index: 1; }
+        .key.black { background: #000; color: #fff; width: 22px; height: 68px; margin-left: -11px; margin-right: -11px; z-index: 2; padding-top: 45px; }
+        .key.active { background: #ff4d4d !important; color: #fff !important; }
+        
+        /* 五線譜表示 */
+        #staff { background: #fff; border-radius: 4px; padding: 5px; height: 130px; user-select: none; }
+        .staff-hint { font-size: 11px; color: #aaa; margin-top: 4px; }
+        
+        /* 8小節履歴グリッド */
+        .history-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+        .measure-box { background: #fff; border-radius: 4px; height: 110px; position: relative; border: 2px dashed #444; }
+        .measure-box.dragover { border-color: #ff9800; background: #fff8e1; }
+        .measure-label { position: absolute; top: 2px; left: 5px; font-size: 10px; color: #666; font-weight: bold; }
+        .measure-chord { position: absolute; top: 2px; right: 5px; font-size: 12px; font-weight: bold; color: #d32f2f; }
+
+        /* 結果＆操作領域 */
+        .result-box { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; }
+        .draggable-chord { background: #ff9800; color: #000; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: grab; display: inline-block; }
+        .btn { border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .reset-btn { background: #e53935; color: white; }
+        .add-hist-btn { background: #2196f3; color: white; }
+        .clear-hist-btn { background: #757575; color: white; }
+
+        /* テンキープール (1〜0) */
+        .pool-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 10px; }
+        .pool-box { border: 2px dashed #555; background: #2a2a2a; height: 65px; border-radius: 6px; text-align: center; padding: 5px; font-size: 11px; }
+        .pool-box.dragover { border-color: #ff9800; background: #333; }
+        .pool-box .num { font-weight: bold; color: #888; }
+        .pool-box .chord-val { display: block; margin-top: 4px; font-size: 15px; color: #4caf50; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>MIDI & Synth Chord Analyzer</h2>
+
+    <!-- MIDIデバイス選択 -->
+    <div class="panel">
+        <label><strong>接続MIDIデバイス選択:</strong></label>
+        <select id="midi-select" style="margin-top: 5px;">
+            <option value="">MIDIデバイスを検出中...</option>
+        </select>
+    </div>
+
+    <!-- シンセパラメーター -->
+    <div class="panel">
+        <strong>Synth (Sawtooth + Lowpass + ADSR)</strong>
+        <div class="controls" style="margin-top: 8px;">
+            <div class="control-group"><label>Cutoff</label><input type="range" id="cutoff" min="100" max="8000" value="2500"></div>
+            <div class="control-group"><label>Attack</label><input type="range" id="attack" min="0.01" max="2" step="0.01" value="0.05"></div>
+            <div class="control-group"><label>Decay</label><input type="range" id="decay" min="0.01" max="2" step="0.01" value="0.2"></div>
+            <div class="control-group"><label>Sustain</label><input type="range" id="sustain" min="0" max="1" step="0.01" value="0.5"></div>
+            <div class="control-group"><label>Release</label><input type="range" id="release" min="0.1" max="5" step="0.1" value="1.0"></div>
+        </div>
+    </div>
+
+    <!-- 鍵盤UI -->
+    <div class="panel">
+        <div class="keyboard" id="keyboard"></div>
+    </div>
+
+    <!-- 入力中の五線譜 (ドラッグで音高変更可能) -->
+    <div class="panel">
+        <strong>現在の入力音符（音符を上下ドラッグでピッチ変更: 上=# / 下=♭）</strong>
+        <div id="staff"></div>
+    </div>
+
+    <!-- 判定結果 & リセット -->
+    <div class="panel result-box">
+        <div>
+            <div>判定コード: <span id="chord-drag" class="draggable-chord" draggable="true">---</span></div>
+            <div style="margin-top: 5px; font-size: 13px;">推測スケール: <span id="scale-res" style="color: #4fc3f7;">---</span></div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn add-hist-btn" onclick="addCurrentToHistory()">小節履歴に追加</button>
+            <button class="btn reset-btn" onclick="resetNotes()">判定リセット</button>
+        </div>
+    </div>
+
+    <!-- 8小節コード履歴エリア -->
+    <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>8小節コード履歴 (ドラッグ＆ドロップまたは「小節履歴に追加」で保存)</strong>
+            <button class="btn clear-hist-btn" onclick="clearHistory()">履歴全消去</button>
+        </div>
+        <div class="history-grid" id="history-grid"></div>
+    </div>
+
+    <!-- テンキー用コードプール (1-9, 0) -->
+    <div class="panel">
+        <strong>コードプール (ドラッグ＆ドロップ保存 / テンキー1〜9, 0で発音)</strong>
+        <div class="pool-grid" id="pool-grid"></div>
+    </div>
+</div>
+
+<script>
+// --- 基本データ ---
+const NOTES = ['C4','C#4','D4','D#4','E4','F4','F#4','G4','G#4','A4','A#4','B4','C5','C#5','D5','D#5','E5','F5','F#5','G5'];
+const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+const PC_KEY_MAP = {
+    'a':'C4', 'w':'C#4', 's':'D4', 'e':'D#4', 'd':'E4', 'f':'F4',
+    't':'F#4', 'g':'G4', 'y':'G#4', 'h':'A4', 'u':'A#4', 'j':'B4',
+    'k':'C5', 'o':'C#5', 'l':'D5', 'p':'D#5', ';':'E5', ':':'F5',
+    '[':'F#5', ']':'G5'
+};
+
+let activeNotes = new Set();
+let chordHistory = new Array(8).fill(null); // 8小節の履歴保持
+let poolData = {}; 
+let synth, filter;
+let midiAccessObj = null;
+let currentMidiInput = null;
+
+// --- 1. Synth 初期化 ---
+function initAudio() {
+    if (synth) return;
+    Tone.start();
+    filter = new Tone.Filter({ frequency: 2500, type: "lowpass" }).toDestination();
+    synth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: "sawtooth" },
+        envelope: { attack: 0.05, decay: 0.2, sustain: 0.5, release: 1.0 }
+    }).connect(filter);
+
+    document.getElementById('cutoff').oninput = (e) => filter.frequency.value = parseFloat(e.target.value);
+    document.getElementById('attack').oninput = (e) => synth.set({ envelope: { attack: parseFloat(e.target.value) } });
+    document.getElementById('decay').oninput = (e) => synth.set({ envelope: { decay: parseFloat(e.target.value) } });
+    document.getElementById('sustain').oninput = (e) => synth.set({ envelope: { sustain: parseFloat(e.target.value) } });
+    document.getElementById('release').oninput = (e) => synth.set({ envelope: { release: parseFloat(e.target.value) } });
+}
+
+// --- 2. 鍵盤UI作成 ---
+const keyboardEl = document.getElementById('keyboard');
+NOTES.forEach(note => {
+    const isBlack = note.includes('#');
+    const keyEl = document.createElement('div');
+    keyEl.className = `key ${isBlack ? 'black' : 'white'}`;
+    keyEl.dataset.note = note;
+    keyEl.innerText = note;
+    keyEl.onmousedown = () => { initAudio(); playNote(note); };
+    keyEl.onmouseup = () => stopNote(note);
+    keyboardEl.appendChild(keyEl);
+});
+
+// --- 3. ノート制御 ---
+function playNote(note) {
+    initAudio();
+    synth.triggerAttack(note);
+    activeNotes.add(note);
+    updateAll();
+}
+
+function stopNote(note) {
+    if (synth) synth.triggerRelease(note);
+}
+
+function resetNotes() {
+    if (synth) synth.releaseAll();
+    activeNotes.clear();
+    updateAll();
+}
+
+function getNoteNameFromMidi(midiNum, direction) {
+    const octave = Math.floor(midiNum / 12) - 1;
+    const pc = ((midiNum % 12) + 12) % 12;
+    const name = (direction === 'up') ? SHARP_NAMES[pc] : FLAT_NAMES[pc];
+    return `${name}${octave}`;
+}
+
+// --- 4. 解析＆全UIアップデート ---
+function updateAll() {
+    // 鍵盤ハイライト
+    document.querySelectorAll('.key').forEach(el => {
+        if (activeNotes.has(el.dataset.note)) el.classList.add('active');
+        else el.classList.remove('active');
+    });
+
+    const notesArr = Array.from(activeNotes).sort((a,b) => Tonal.Note.midi(a) - Tonal.Note.midi(b));
+
+    // コード＆スケール判定 (Tonal.js 修正版)
+    const chordDrag = document.getElementById('chord-drag');
+    const scaleRes = document.getElementById('scale-res');
+
+    if (notesArr.length > 0) {
+        // 音階クラス抽出
+        const pitchClasses = Array.from(new Set(notesArr.map(n => Tonal.Note.get(n).pc)));
+        const detectedChords = Tonal.Chord.detect(notesArr);
+        const detectedScales = Tonal.Scale.detect(pitchClasses);
+
+        chordDrag.innerText = detectedChords.length > 0 ? detectedChords[0] : "判定不能";
+        scaleRes.innerText = detectedScales.length > 0 ? detectedScales.slice(0, 2).join(', ') : "該当なし";
+    } else {
+        chordDrag.innerText = "---";
+        scaleRes.innerText = "---";
+    }
+
+    renderMainStaff(notesArr);
+    renderHistoryGrid();
+}
+
+// --- 5. メイン五線譜の描画 & 音符ドラッグ移動 ---
+function renderMainStaff(notes) {
+    const staffDiv = document.getElementById('staff');
+    staffDiv.innerHTML = "";
+    const { Renderer, Stave, StaveNote, Voice, Formatter, Accidental } = Vex.Flow;
+    
+    const renderer = new Renderer(staffDiv, Renderer.Backends.SVG);
+    renderer.resize(920, 120);
+    const context = renderer.getContext();
+    const stave = new Stave(10, 0, 890);
+    stave.addClef("treble").setContext(context).draw();
+
+    if (notes.length === 0) return;
+
+    try {
+        const keys = notes.map(n => {
+            const parsed = Tonal.Note.get(n);
+            return `${parsed.letter.toLowerCase()}${parsed.accidental}/${parsed.octave}`;
+        });
+
+        const staveNote = new StaveNote({ keys: keys, duration: "w" });
+        notes.forEach((n, idx) => {
+            const acc = Tonal.Note.get(n).accidental;
+            if (acc) staveNote.addModifier(new Accidental(acc), idx);
+        });
+
+        const voice = new Voice({ num_beats: 4, beat_value: 4 });
+        voice.addTickables([staveNote]);
+        new Formatter().joinAndFormat([voice], 400);
+        voice.draw(context, stave);
+
+        // --- 音符のマウスドラッグ(上下)イベントを登録 ---
+        const noteElements = staffDiv.querySelectorAll('.vf-stavenote');
+        noteElements.forEach((el) => {
+            el.style.cursor = 'ns-resize';
+            
+            el.onmousedown = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const startY = e.clientY;
+
+                const onMouseMove = (moveEvt) => {
+                    const diffY = startY - moveEvt.clientY; // 上方向はプラス
+                    const semitoneShift = Math.round(diffY / 12); // 12pxで1半音
+
+                    if (semitoneShift !== 0) {
+                        // 対象の音符を特定して高さを変更
+                        const direction = semitoneShift > 0 ? 'up' : 'down';
+                        
+                        // 今回変更するノート（ドラッグ位置により調整）
+                        const targetNoteIndex = 0; // 最も近いノートを検索
+                        const currentNoteName = notes[targetNoteIndex];
+                        const newMidi = Tonal.Note.midi(currentNoteName) + (semitoneShift > 0 ? 1 : -1);
+                        const newNoteName = getNoteNameFromMidi(newMidi, direction);
+
+                        // 配列置換
+                        activeNotes.delete(currentNoteName);
+                        activeNotes.add(newNoteName);
+
+                        // 音色確認
+                        initAudio();
+                        synth.triggerAttackRelease(newNoteName, "8n");
+
+                        window.removeEventListener('mousemove', onMouseMove);
+                        window.removeEventListener('mouseup', onMouseUp);
+                        updateAll();
+                    }
+                };
+
+                const onMouseUp = () => {
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                };
+
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            };
+        });
+
+    } catch (e) {
+        console.error("VexFlow render error:", e);
+    }
+}
+
+// --- 6. 8小節履歴エリアの構築 & レンダリング ---
+const historyGrid = document.getElementById('history-grid');
+
+function renderHistoryGrid() {
+    historyGrid.innerHTML = "";
+    const { Renderer, Stave, StaveNote, Voice, Formatter, Accidental } = Vex.Flow;
+
+    for (let i = 0; i < 8; i++) {
+        const box = document.createElement('div');
+        box.className = 'measure-box';
+        box.dataset.index = i;
+        
+        const label = document.createElement('span');
+        label.className = 'measure-label';
+        label.innerText = `M${i+1}`;
+        box.appendChild(label);
+
+        const data = chordHistory[i];
+        if (data) {
+            const chordLabel = document.createElement('span');
+            chordLabel.className = 'measure-chord';
+            chordLabel.innerText = data.chord;
+            box.appendChild(chordLabel);
+        }
+
+        // ドラッグ＆ドロップ受け入れ設定
+        box.ondragover = (e) => { e.preventDefault(); box.classList.add('dragover'); };
+        box.ondragleave = () => box.classList.remove('dragover');
+        box.ondrop = (e) => {
+            e.preventDefault();
+            box.classList.remove('dragover');
+            const dropData = JSON.parse(e.dataTransfer.getData('text/plain'));
+            if (dropData.chord && dropData.chord !== "---") {
+                chordHistory[i] = dropData;
+                updateAll();
+            }
+        };
+
+        historyGrid.appendChild(box);
+
+        // VexFlowで小節の音符を描画
+        if (data && data.notes && data.notes.length > 0) {
+            try {
+                const renderer = new Renderer(box, Renderer.Backends.SVG);
+                renderer.resize(210, 100);
+                const context = renderer.getContext();
+                const stave = new Stave(0, 10, 200);
+                stave.setContext(context).draw();
+
+                const keys = data.notes.map(n => {
+                    const parsed = Tonal.Note.get(n);
+                    return `${parsed.letter.toLowerCase()}${parsed.accidental}/${parsed.octave}`;
+                });
+                const staveNote = new StaveNote({ keys: keys, duration: "w" });
+                data.notes.forEach((n, idx) => {
+                    const acc = Tonal.Note.get(n).accidental;
+                    if (acc) staveNote.addModifier(new Accidental(acc), idx);
+                });
+
+                const voice = new Voice({ num_beats: 4, beat_value: 4 });
+                voice.addTickables([staveNote]);
+                new Formatter().joinAndFormat([voice], 120);
+                voice.draw(context, stave);
+            } catch(err) {}
+        }
+    }
+}
+
+function addCurrentToHistory() {
+    const chordName = document.getElementById('chord-drag').innerText;
+    const notesArr = Array.from(activeNotes);
+    if (notesArr.length === 0 || chordName === "---") return;
+
+    // 空いている小節を探して格納
+    const emptyIndex = chordHistory.findIndex(item => item === null);
+    const targetIdx = emptyIndex !== -1 ? emptyIndex : 7; // 満杯なら最後を上書き
+    chordHistory[targetIdx] = { chord: chordName, notes: notesArr };
+    updateAll();
+}
+
+function clearHistory() {
+    chordHistory = new Array(8).fill(null);
+    updateAll();
+}
+
+// --- 7. テンキープール (1〜9, 0) ---
+const poolGrid = document.getElementById('pool-grid');
+['1','2','3','4','5','6','7','8','9','0'].forEach(num => {
+    const box = document.createElement('div');
+    box.className = 'pool-box';
+    box.dataset.num = num;
+    box.innerHTML = `<span class="num">Num [${num}]</span><span class="chord-val">---</span>`;
+
+    box.ondragover = (e) => { e.preventDefault(); box.classList.add('dragover'); };
+    box.ondragleave = () => box.classList.remove('dragover');
+    box.ondrop = (e) => {
+        e.preventDefault();
+        box.classList.remove('dragover');
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.chord && data.chord !== "---") {
+            poolData[num] = data;
+            box.querySelector('.chord-val').innerText = data.chord;
+        }
+    };
+    poolGrid.appendChild(box);
+});
+
+document.getElementById('chord-drag').ondragstart = (e) => {
+    const chordName = e.target.innerText;
+    const notesArr = Array.from(activeNotes);
+    e.dataTransfer.setData('text/plain', JSON.stringify({ chord: chordName, notes: notesArr }));
+};
+
+// --- 8. Web MIDI API (デバイス選択メニュー対応) ---
+const midiSelect = document.getElementById('midi-select');
+
+function setupMIDI() {
+    if (!navigator.requestMIDIAccess) {
+        midiSelect.innerHTML = '<option value="">Web MIDI API 非対応ブラウザです</option>';
+        return;
+    }
+    navigator.requestMIDIAccess().then(access => {
+        midiAccessObj = access;
+        updateMIDIDeviceList();
+        midiAccessObj.onstatechange = () => updateMIDIDeviceList();
+    }).catch(err => {
+        midiSelect.innerHTML = `<option value="">MIDI接続エラー: ${err}</option>`;
+    });
+}
+
+function updateMIDIDeviceList() {
+    const inputs = Array.from(midiAccessObj.inputs.values());
+    midiSelect.innerHTML = '';
+
+    if (inputs.length === 0) {
+        midiSelect.innerHTML = '<option value="">MIDIデバイスが見つかりません</option>';
+        return;
+    }
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = "";
+    defaultOpt.innerText = "-- MIDIデバイスを選択してください --";
+    midiSelect.appendChild(defaultOpt);
+
+    inputs.forEach(input => {
+        const opt = document.createElement('option');
+        opt.value = input.id;
+        opt.innerText = `${input.name} (${input.manufacturer || '汎用'})`;
+        midiSelect.appendChild(opt);
+    });
+
+    midiSelect.onchange = () => {
+        if (currentMidiInput) currentMidiInput.onmidimessage = null;
+        const selectedInput = inputs.find(i => i.id === midiSelect.value);
+        if (selectedInput) {
+            currentMidiInput = selectedInput;
+            currentMidiInput.onmidimessage = handleMIDIMessage;
+        }
+    };
+}
+
+function handleMIDIMessage(msg) {
+    const [status, noteNum, velocity] = msg.data;
+    const command = status >> 4;
+    const noteName = Tonal.Note.fromMidi(noteNum);
+    if (command === 9 && velocity > 0) playNote(noteName);
+    else if (command === 8 || (command === 9 && velocity === 0)) stopNote(noteName);
+}
+
+// --- 9. PCキーボード ＆ テンキーイベント ---
+window.addEventListener('keydown', (e) => {
+    initAudio();
+    if (e.repeat) return;
+    const key = e.key.toLowerCase();
+
+    // PCキーボード入力
+    if (PC_KEY_MAP[key]) {
+        playNote(PC_KEY_MAP[key]);
+    }
+
+    // テンキー演奏
+    let numKey = null;
+    if (e.code.startsWith('Numpad')) numKey = e.code.replace('Numpad', '');
+    else if (['1','2','3','4','5','6','7','8','9','0'].includes(e.key)) numKey = e.key;
+
+    if (numKey && poolData[numKey]) {
+        synth.triggerAttackRelease(poolData[numKey].notes, "1m");
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    if (PC_KEY_MAP[key]) {
+        stopNote(PC_KEY_MAP[key]);
+    }
+});
+
+// 初期化
+setupMIDI();
+updateAll();
+</script>
+</body>
+</html>
