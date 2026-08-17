@@ -116,7 +116,7 @@
 
     <!-- 8小節コード履歴 -->
     <div class="panel">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; justify-style:space-between; align-items:center;">
             <strong>8小節コード履歴 (ドラッグ＆ドロップ保存 / 判定リセットで消去されません)</strong>
             <button class="btn clear-hist-btn" onclick="clearHistory()">履歴全消去</button>
         </div>
@@ -282,7 +282,9 @@ function renderMainStaff(notes) {
 
         const voice = new Voice({ num_beats: 4, beat_value: 4 });
         voice.addTickables([staveNote]);
-        new Formatter().joinAndFormat([voice], 400);
+        
+        // Formatterメソッド呼び出しの修正箇所
+        new Formatter().joinVoices([voice]).format([voice], 400);
         voice.draw(context, stave);
 
         // 音符の上下ドラッグ移動イベント
@@ -392,7 +394,9 @@ function renderHistoryGrid() {
 
                 const voice = new Voice({ num_beats: 4, beat_value: 4 });
                 voice.addTickables([staveNote]);
-                new Formatter().joinAndFormat([voice], 120);
+                
+                // Formatterメソッド呼び出しの修正箇所
+                new Formatter().joinVoices([voice]).format([voice], 120);
                 voice.draw(context, stave);
             } catch(err) {}
         }
