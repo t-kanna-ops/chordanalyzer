@@ -4,13 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MIDI & Synth Chord Analyzer</title>
-    <!-- favicon 404防止 -->
     <link rel="shortcut icon" href="#">
 
-    <!-- 1. Tone.js (シンセ音源) -->
+    <!-- 1. Tone.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 
-    <!-- 2. Tonal.js (音楽理論エンジン - 確実な読み込みフォールバック付き) -->
+    <!-- 2. Tonal.js -->
     <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
     <script>
         if (typeof Tonal === 'undefined') {
@@ -18,7 +17,7 @@
         }
     </script>
 
-    <!-- 3. VexFlow (五線譜描画) -->
+    <!-- 3. VexFlow -->
     <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
     
     <style>
@@ -151,6 +150,19 @@ let synth, filter;
 let midiAccessObj = null;
 let currentMidiInput = null;
 
+// --- VexFlow用 音名安全変換処理 ---
+function parseNoteForVex(noteStr) {
+    if (typeof Tonal === 'undefined') return { key: "c/4", acc: "" };
+    const p = Tonal.Note.get(noteStr);
+    const letter = (p.letter || 'C').toLowerCase();
+    const acc = p.acc || ''; 
+    const oct = (p.oct !== undefined && p.oct !== null) ? p.oct : 4;
+    return {
+        key: `${letter}${acc}/${oct}`,
+        acc: acc
+    };
+}
+
 // --- 1. Tone.js オーディオ初期化 ---
 function initAudio() {
     if (synth) return;
@@ -208,7 +220,6 @@ function midiToNoteName(midiNum, direction) {
 
 // --- 4. 解析＆全UIアップデート ---
 function updateAll() {
-    // 鍵盤ハイライト（赤色）
     document.querySelectorAll('.key').forEach(el => {
         if (activeNotes.has(el.dataset.note)) el.classList.add('active');
         else el.classList.remove('active');
@@ -220,7 +231,6 @@ function updateAll() {
         return ma - mb;
     });
 
-    // Tonal.js によるコード＆スケール判定
     const chordDrag = document.getElementById('chord-drag');
     const scaleRes = document.getElementById('scale-res');
 
@@ -262,15 +272,12 @@ function renderMainStaff(notes) {
     if (notes.length === 0) return;
 
     try {
-        const keys = notes.map(n => {
-            const parsed = Tonal.Note.get(n);
-            return `${parsed.letter.toLowerCase()}${parsed.accidental}/${parsed.octave}`;
-        });
+        const parsedNotes = notes.map(parseNoteForVex);
+        const keys = parsedNotes.map(p => p.key);
 
         const staveNote = new StaveNote({ keys: keys, duration: "w" });
-        notes.forEach((n, idx) => {
-            const acc = Tonal.Note.get(n).accidental;
-            if (acc) staveNote.addModifier(new Accidental(acc), idx);
+        parsedNotes.forEach((p, idx) => {
+            if (p.acc) staveNote.addModifier(new Accidental(p.acc), idx);
         });
 
         const voice = new Voice({ num_beats: 4, beat_value: 4 });
@@ -288,12 +295,12 @@ function renderMainStaff(notes) {
                 const startY = e.clientY;
 
                 const onMouseMove = (moveEvt) => {
-                    const diffY = startY - moveEvt.clientY; // 上方向でプラス
+                    const diffY = startY - moveEvt.clientY;
                     const semitoneShift = Math.round(diffY / 12);
 
                     if (semitoneShift !== 0 && notes.length > 0) {
                         const direction = semitoneShift > 0 ? 'up' : 'down';
-                        const currentNoteName = notes[0]; // 単音/和音の先頭音から移動
+                        const currentNoteName = notes[0];
                         const currentMidi = Tonal.Note.midi(currentNoteName);
                         if (currentMidi) {
                             const newMidi = currentMidi + (semitoneShift > 0 ? 1 : -1);
@@ -353,7 +360,6 @@ function renderHistoryGrid() {
             box.appendChild(chordLabel);
         }
 
-        // ドラッグ＆ドロップ適用
         box.ondragover = (e) => { e.preventDefault(); box.classList.add('dragover'); };
         box.ondragleave = () => box.classList.remove('dragover');
         box.ondrop = (e) => {
@@ -368,7 +374,6 @@ function renderHistoryGrid() {
 
         historyGrid.appendChild(box);
 
-        // 小節内ミニ五線譜のレンダリング
         if (data && data.notes && data.notes.length > 0) {
             try {
                 const renderer = new Renderer(box, Renderer.Backends.SVG);
@@ -377,14 +382,12 @@ function renderHistoryGrid() {
                 const stave = new Stave(0, 10, 200);
                 stave.setContext(context).draw();
 
-                const keys = data.notes.map(n => {
-                    const parsed = Tonal.Note.get(n);
-                    return `${parsed.letter.toLowerCase()}${parsed.accidental}/${parsed.octave}`;
-                });
+                const parsedNotes = data.notes.map(parseNoteForVex);
+                const keys = parsedNotes.map(p => p.key);
+
                 const staveNote = new StaveNote({ keys: keys, duration: "w" });
-                data.notes.forEach((n, idx) => {
-                    const acc = Tonal.Note.get(n).accidental;
-                    if (acc) staveNote.addModifier(new Accidental(acc), idx);
+                parsedNotes.forEach((p, idx) => {
+                    if (p.acc) staveNote.addModifier(new Accidental(p.acc), idx);
                 });
 
                 const voice = new Voice({ num_beats: 4, beat_value: 4 });
@@ -440,12 +443,12 @@ document.getElementById('chord-drag').ondragstart = (e) => {
     e.dataTransfer.setData('text/plain', JSON.stringify({ chord: chordName, notes: notesArr }));
 };
 
-// --- 8. Web MIDI API (デバイス選択メニュー) ---
+// --- 8. Web MIDI API ---
 const midiSelect = document.getElementById('midi-select');
 
 function setupMIDI() {
     if (!navigator.requestMIDIAccess) {
-        midiSelect.innerHTML = '<option value="">Web MIDI API 非対応環境です (HTTPSまたはlocalhostで実行してください)</option>';
+        midiSelect.innerHTML = '<option value="">Web MIDI API 非対応環境です</option>';
         return;
     }
     navigator.requestMIDIAccess().then(access => {
@@ -502,12 +505,10 @@ window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     const key = e.key.toLowerCase();
 
-    // PCキーボードによるノート演奏
     if (PC_KEY_MAP[key]) {
         playNote(PC_KEY_MAP[key]);
     }
 
-    // テンキーによるコードプール発音
     let numKey = null;
     if (e.code.startsWith('Numpad')) numKey = e.code.replace('Numpad', '');
     else if (['1','2','3','4','5','6','7','8','9','0'].includes(e.key)) numKey = e.key;
@@ -524,7 +525,6 @@ window.addEventListener('keyup', (e) => {
     }
 });
 
-// 初期起動
 setupMIDI();
 updateAll();
 </script>
