@@ -34,9 +34,9 @@
         
         /* 鍵盤UI */
         .keyboard { position: relative; height: 110px; display: flex; user-select: none; margin-top: 10px; overflow-x: auto; }
-        .key { border: 1px solid #000; box-sizing: border-box; cursor: pointer; text-align: center; font-size: 10px; padding-top: 75px; }
-        .key.white { background: #fff; color: #000; width: 36px; height: 110px; z-index: 1; }
-        .key.black { background: #000; color: #fff; width: 22px; height: 68px; margin-left: -11px; margin-right: -11px; z-index: 2; padding-top: 45px; }
+        .key { border: 1px solid #000; box-sizing: border-box; cursor: pointer; text-align: center; font-size: 10px; padding-top: 75px; flex-shrink: 0; }
+        .key.white { background: #fff; color: #000; width: 32px; height: 110px; z-index: 1; }
+        .key.black { background: #000; color: #fff; width: 20px; height: 68px; margin-left: -10px; margin-right: -10px; z-index: 2; padding-top: 45px; }
         .key.active { background: #ff4d4d !important; color: #fff !important; }
         
         /* メイン五線譜表示 */
@@ -62,6 +62,20 @@
         .clear-hist-btn { background: #616161; color: white; font-size: 12px; }
         .play-btn { background: #4caf50; color: white; }
         .play-btn.playing { background: #ff9800; }
+
+        /* スケールリンクスタイル */
+        .scale-link { color: #4fc3f7; text-decoration: underline; cursor: pointer; font-weight: bold; }
+        .scale-link:hover { color: #81d4fa; }
+
+        /* ポップアップモーダル */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.active { display: flex; }
+        .modal-content { background: #222; color: #fff; padding: 20px; border-radius: 8px; max-width: 420px; width: 90%; border: 1px solid #444; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; padding-bottom: 10px; font-size: 18px; font-weight: bold; color: #4fc3f7; }
+        .modal-close { background: none; border: none; color: #aaa; font-size: 24px; cursor: pointer; }
+        .modal-close:hover { color: #fff; }
+        .scale-notes-container { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 15px; }
+        .note-badge { background: #2196f3; color: #fff; padding: 6px 12px; border-radius: 16px; font-weight: bold; font-size: 14px; }
 
         /* テンキープール (1〜0) */
         .pool-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
@@ -117,7 +131,7 @@
 
     <!-- メイン五線譜 -->
     <div class="panel">
-        <strong>現在の入力音符（音符移動: C2〜G4 / 選択された音符は赤色で視覚化）</strong>
+        <strong>現在の入力音符（音符移動: C3〜G6 / 選択された音符は赤色で視覚化）</strong>
         <div id="staff" style="margin-top: 6px;"></div>
     </div>
 
@@ -144,7 +158,7 @@
             </div>
             <div>
                 <div>判定コード: <span id="chord-drag" class="draggable-chord" draggable="true">---</span></div>
-                <div style="margin-top: 6px; font-size: 13px;">推測スケール: <span id="scale-res" style="color: #4fc3f7;">---</span></div>
+                <div style="margin-top: 6px; font-size: 13px;">推測スケール: <span id="scale-res">---</span></div>
             </div>
         </div>
         <div style="display: flex; gap: 10px;">
@@ -190,12 +204,35 @@
     </div>
 </div>
 
+<!-- スケール構成音ポップアップモーダル -->
+<div id="scale-modal" class="modal-overlay" onclick="closeScaleModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span id="modal-scale-title">Scale Name</span>
+            <button class="modal-close" onclick="closeScaleModal()">&times;</button>
+        </div>
+        <div style="margin-top: 15px;">
+            <p style="margin: 0; font-size: 13px; color: #aaa;">構成音 (Notes):</p>
+            <div id="modal-scale-notes" class="scale-notes-container"></div>
+        </div>
+    </div>
+</div>
+
 <script>
-// --- 音名マッピングデータ ---
-const NOTES = ['C4','C#4','D4','D#4','E4','F4','F#4','G4','G#4','A4','A#4','B4','C5','C#5','D5','D#5','E5','F5','F#5','G5'];
+// --- 音域定義: C3 (MIDI 48) ～ G6 (MIDI 91) ---
+const MIN_MIDI = 48; // C3
+const MAX_MIDI = 91; // G6
 const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const POOL_KEYS   = ['1','2','3','4','5','6','7','8','9','0'];
+
+// 音名リスト動的生成
+const NOTES = [];
+for (let m = MIN_MIDI; m <= MAX_MIDI; m++) {
+    const oct = Math.floor(m / 12) - 1;
+    const pc = m % 12;
+    NOTES.push(`${SHARP_NAMES[pc]}${oct}`);
+}
 
 const PC_KEY_MAP = {
     'a':'C4', 'w':'C#4', 's':'D4', 'e':'D#4', 'd':'E4', 'f':'F4',
@@ -216,9 +253,6 @@ let currentMidiOutput = null;
 
 let isPlayingPool = false;
 let poolPlayTimeout = null;
-
-const MIN_MIDI = 48; // C3
-const MAX_MIDI = 91; // G6
 
 // --- VexFlow用 音名変換処理 ---
 function parseNoteForVex(noteStr) {
@@ -247,7 +281,7 @@ function initAudio() {
     document.getElementById('release').oninput = (e) => synth.set({ envelope: { release: parseFloat(e.target.value) } });
 }
 
-// --- 2. 鍵盤UI作成 ---
+// --- 2. 鍵盤UI作成 (C3〜G6) ---
 const keyboardEl = document.getElementById('keyboard');
 NOTES.forEach(note => {
     const isBlack = note.includes('#');
@@ -289,7 +323,7 @@ function midiToNoteName(midiNum, direction) {
     return `${name}${octave}`;
 }
 
-// --- 4. 高度なコード＆スケール判定 (転回形対応 & ルート指定) ---
+// --- 4. 高度なコード＆スケール判定 (転回形・指定ルート分数コード対応) ---
 function analyzeChordAndScale(notesArr, forcedRoot) {
     if (!notesArr || notesArr.length === 0 || typeof Tonal === 'undefined') {
         return { chord: "---", scale: "---" };
@@ -299,45 +333,26 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
     const bassPc = bassNote.pc;
     const pitchClasses = Array.from(new Set(notesArr.map(n => Tonal.Note.get(n).pc)));
 
-    let candidateRoots = [];
-    if (forcedRoot !== "AUTO") {
-        candidateRoots = [forcedRoot];
-    } else {
-        candidateRoots = pitchClasses;
-    }
-
+    // 1. 入力音符群単体で「転回形」を考慮した最も自然なコードを解析
     let candidates = [];
-
-    candidateRoots.forEach(root => {
-        // 対象ルートを先頭にした音階構成で検証
+    pitchClasses.forEach(root => {
         const otherPcs = pitchClasses.filter(pc => Tonal.Note.chroma(pc) !== Tonal.Note.chroma(root));
         const reorderedPcs = [root, ...otherPcs];
-
         const detectedList = Tonal.Chord.detect(reorderedPcs) || [];
 
         detectedList.forEach(rawSymbol => {
             const chordObj = Tonal.Chord.get(rawSymbol);
             if (!chordObj.empty) {
                 let rootPc = chordObj.root || chordObj.tonic || root;
-                let displaySymbol = rawSymbol;
-
-                // ベース音がルートと異なる場合は分数コード表記に補正
-                if (Tonal.Note.chroma(bassPc) !== Tonal.Note.chroma(rootPc)) {
-                    displaySymbol = `${rawSymbol}/${bassPc}`;
-                }
-
                 candidates.push({
-                    symbol: displaySymbol,
-                    rawSymbol: rawSymbol,
+                    symbol: rawSymbol,
                     chordObj: chordObj,
-                    root: rootPc,
-                    isSlash: Tonal.Note.chroma(bassPc) !== Tonal.Note.chroma(rootPc)
+                    root: rootPc
                 });
             }
         });
     });
 
-    // 候補がない場合、Tonal標準の全体判定をフォールバック実行
     if (candidates.length === 0) {
         const fallback = Tonal.Chord.detect(notesArr) || [];
         fallback.forEach(rawSymbol => {
@@ -345,89 +360,166 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
             if (!chordObj.empty) {
                 candidates.push({
                     symbol: rawSymbol,
-                    rawSymbol: rawSymbol,
                     chordObj: chordObj,
-                    root: chordObj.root || chordObj.tonic,
-                    isSlash: rawSymbol.includes('/')
+                    root: chordObj.root || chordObj.tonic
                 });
             }
         });
     }
 
-    if (candidates.length === 0) {
-        return { chord: "判定不能", scale: "---" };
+    let finalChordSymbol = "判定不能";
+
+    if (candidates.length > 0) {
+        // 自然さのスコアリング（メジャー・マイナーなど標準的なコードを優先）
+        candidates.forEach(cand => {
+            let score = 50;
+            const type = (cand.chordObj.type || "").toLowerCase();
+            let symbol = cand.symbol;
+
+            if (type === "major" || type === "minor" || symbol === cand.root || symbol === cand.root + "m" || symbol === cand.root + "maj") score += 50;
+            else if (type.includes("seventh") || type.includes("7")) score += 40;
+            else if (type.includes("suspended") || type.includes("sus") || type.includes("add")) score += 30;
+            else if (type.includes("diminished") || type.includes("augmented")) score += 20;
+            else score += 10;
+
+            if (symbol.includes("#5") || (symbol.includes("b5") && !type.includes("half-diminished"))) score -= 35;
+            if (symbol.includes("no3") || symbol.includes("no5")) score -= 20;
+
+            cand.score = score;
+        });
+
+        candidates.sort((a, b) => b.score - a.score);
+        const bestBase = candidates[0];
+        let baseSymbol = bestBase.symbol.replace(/maj$/, 'M'); // 表記の最適化 (例: Cmaj -> CM)
+
+        if (forcedRoot === "AUTO") {
+            // 最低音がルートと異なる場合は転回形（分数コード）表記
+            if (Tonal.Note.chroma(bassPc) !== Tonal.Note.chroma(bestBase.root)) {
+                finalChordSymbol = `${baseSymbol}/${bassPc}`;
+            } else {
+                finalChordSymbol = baseSymbol;
+            }
+        } else {
+            // ルート指定あり: 入力音の最も自然なコードに指定ルートを適用
+            if (Tonal.Note.chroma(forcedRoot) === Tonal.Note.chroma(bestBase.root)) {
+                finalChordSymbol = baseSymbol;
+            } else {
+                finalChordSymbol = `${baseSymbol}/${forcedRoot}`;
+            }
+        }
     }
 
-    // 自然さスコアリング
-    candidates.forEach(cand => {
-        let score = 50;
-        const type = (cand.chordObj.type || "").toLowerCase();
-        const symbol = cand.symbol;
+    // 2. スケール判定 (指定ルートに基づき再計算)
+    let scaleStr = "該当なし";
+    if (forcedRoot === "AUTO") {
+        const detectedScales = Tonal.Scale.detect(pitchClasses) || [];
+        const commonScaleTypes = [
+            "major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
+            "harmonic minor", "melodic minor", "major pentatonic", "minor pentatonic", "blues"
+        ];
 
-        // メジャー / マイナー などの基本三和音
-        if (type === "major" || type === "minor" || symbol.startsWith(cand.root + " ") || symbol === cand.root || symbol === cand.root + "m") score += 50;
-        else if (type.includes("seventh") || type.includes("7")) score += 40;
-        else if (type.includes("suspended") || type.includes("sus") || type.includes("add")) score += 30;
-        else if (type.includes("diminished") || type.includes("augmented")) score += 20;
-        else score += 10;
+        let scoredScales = detectedScales.map(scaleName => {
+            let score = 50;
+            const parts = scaleName.split(' ');
+            const type = parts.slice(1).join(' ').toLowerCase();
 
-        // 特殊・複雑な表記の減点 (m#5 や no3/no5 など)
-        if (symbol.includes("#5") || (symbol.includes("b5") && !type.includes("half-diminished"))) score -= 35;
-        if (symbol.includes("no3") || symbol.includes("no5")) score -= 20;
+            if (commonScaleTypes.includes(type)) score += 30;
+            return { name: scaleName, score: score };
+        });
 
-        // 転回形よりも基本形をわずかに優先
-        if (!cand.isSlash) score += 10;
-
-        // 指定ルートに一致する場合は大幅加点
-        if (forcedRoot !== "AUTO" && Tonal.Note.chroma(cand.root) === Tonal.Note.chroma(forcedRoot)) {
-            score += 100;
+        scoredScales.sort((a, b) => b.score - a.score);
+        let topScales = [];
+        for (let s of scoredScales) {
+            if (!topScales.includes(s.name)) topScales.push(s.name);
+            if (topScales.length >= 2) break;
         }
+        scaleStr = topScales.length > 0 ? topScales.join(', ') : "該当なし";
+    } else {
+        // ルート指定時はそのルートから始まるスケールを優先検索
+        const commonScaleTypes = [
+            "major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
+            "harmonic minor", "melodic minor", "major pentatonic", "minor pentatonic", "blues"
+        ];
 
-        cand.score = score;
-    });
+        let candidates = [];
+        const targetChromaSet = new Set(pitchClasses.map(pc => Tonal.Note.chroma(pc)));
 
-    candidates.sort((a, b) => b.score - a.score);
-    const bestChord = candidates[0];
+        commonScaleTypes.forEach(type => {
+            const scaleName = `${forcedRoot} ${type}`;
+            const scaleObj = Tonal.Scale.get(scaleName);
+            if (!scaleObj.empty) {
+                const scaleChromas = scaleObj.notes.map(n => Tonal.Note.chroma(n));
+                const scaleChromaSet = new Set(scaleChromas);
 
-    // スケール判定
-    const targetRoot = (forcedRoot !== "AUTO") ? forcedRoot : bestChord.root;
-    const detectedScales = Tonal.Scale.detect(pitchClasses) || [];
+                let matchCount = 0;
+                targetChromaSet.forEach(c => {
+                    if (scaleChromaSet.has(c)) matchCount++;
+                });
 
-    const commonScaleTypes = [
-        "major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
-        "harmonic minor", "melodic minor", "major pentatonic", "minor pentatonic", "blues"
-    ];
+                let score = matchCount * 20;
+                if (matchCount === targetChromaSet.size) score += 50; // 全音包含
+                if (["major", "minor", "dorian", "mixolydian", "lydian"].includes(type)) score += 10;
 
-    let scoredScales = detectedScales.map(scaleName => {
-        let score = 50;
-        const parts = scaleName.split(' ');
-        const tonic = parts[0];
-        const type = parts.slice(1).join(' ').toLowerCase();
+                candidates.push({ name: scaleName, score: score });
+            }
+        });
 
-        if (targetRoot && Tonal.Note.chroma(tonic) === Tonal.Note.chroma(targetRoot)) {
-            score += 50;
-        }
-        if (commonScaleTypes.includes(type)) {
-            score += 30;
-        }
-        return { name: scaleName, score: score };
-    });
-
-    scoredScales.sort((a, b) => b.score - a.score);
-
-    let topScales = [];
-    for (let s of scoredScales) {
-        if (!topScales.includes(s.name)) topScales.push(s.name);
-        if (topScales.length >= 2) break;
+        candidates.sort((a, b) => b.score - a.score);
+        let topScales = candidates.slice(0, 2).map(c => c.name);
+        scaleStr = topScales.length > 0 ? topScales.join(', ') : "該当なし";
     }
 
-    return {
-        chord: bestChord.symbol,
-        scale: topScales.length > 0 ? topScales.join(', ') : "該当なし"
-    };
+    return { chord: finalChordSymbol, scale: scaleStr };
 }
 
-// --- 5. 全UIアップデート ---
+// --- 5. 推測スケールリンクとモーダル表示 ---
+function renderScaleResult(scaleStr) {
+    const scaleResEl = document.getElementById('scale-res');
+    scaleResEl.innerHTML = '';
+
+    if (!scaleStr || scaleStr === '---' || scaleStr === '該当なし') {
+        scaleResEl.innerText = scaleStr || '---';
+        return;
+    }
+
+    const scales = scaleStr.split(', ');
+    scales.forEach((sc, idx) => {
+        const span = document.createElement('span');
+        span.className = 'scale-link';
+        span.innerText = sc;
+        span.onclick = () => openScaleModal(sc);
+        scaleResEl.appendChild(span);
+
+        if (idx < scales.length - 1) {
+            scaleResEl.appendChild(document.createTextNode(', '));
+        }
+    });
+}
+
+function openScaleModal(scaleName) {
+    if (typeof Tonal === 'undefined') return;
+    const scaleObj = Tonal.Scale.get(scaleName);
+    if (scaleObj.empty) return;
+
+    document.getElementById('modal-scale-title').innerText = scaleName;
+    const container = document.getElementById('modal-scale-notes');
+    container.innerHTML = '';
+
+    scaleObj.notes.forEach(note => {
+        const badge = document.createElement('span');
+        badge.className = 'note-badge';
+        badge.innerText = note;
+        container.appendChild(badge);
+    });
+
+    document.getElementById('scale-modal').classList.add('active');
+}
+
+function closeScaleModal() {
+    document.getElementById('scale-modal').classList.remove('active');
+}
+
+// --- 6. 全UIアップデート ---
 function updateAll() {
     document.querySelectorAll('.key').forEach(el => {
         if (activeNotes.has(el.dataset.note)) el.classList.add('active');
@@ -441,23 +533,22 @@ function updateAll() {
     });
 
     const chordDrag = document.getElementById('chord-drag');
-    const scaleRes = document.getElementById('scale-res');
     const forcedRoot = document.getElementById('root-select').value;
 
     if (notesArr.length > 0) {
         const result = analyzeChordAndScale(notesArr, forcedRoot);
         chordDrag.innerText = result.chord;
-        scaleRes.innerText = result.scale;
+        renderScaleResult(result.scale);
     } else {
         chordDrag.innerText = "---";
-        scaleRes.innerText = "---";
+        renderScaleResult("---");
     }
 
     renderMainStaff(notesArr);
     renderHistoryGrid();
 }
 
-// --- 6. メイン五線譜描画 (C2〜G4対応 / 音符個別選択) ---
+// --- 7. メイン五線譜描画 (C3〜G6対応) ---
 function renderMainStaff(notes) {
     const staffDiv = document.getElementById('staff');
     staffDiv.innerHTML = "";
@@ -547,7 +638,7 @@ function renderMainStaff(notes) {
     }
 }
 
-// --- 7. 8小節コード履歴 ---
+// --- 8. 8小節コード履歴 ---
 const historyGrid = document.getElementById('history-grid');
 
 function renderHistoryGrid() {
@@ -641,7 +732,7 @@ function clearHistory() {
     updateAll();
 }
 
-// --- 8. テンキープール ＆ 再生コントロール ---
+// --- 9. テンキープール ＆ 再生コントロール ---
 const poolGrid = document.getElementById('pool-grid');
 POOL_KEYS.forEach(num => {
     const box = document.createElement('div');
@@ -726,7 +817,7 @@ function playPoolStep(stepIndex) {
     }, intervalMs);
 }
 
-// --- 9. Web MIDI API ---
+// --- 10. Web MIDI API ---
 const midiInSelect  = document.getElementById('midi-in-select');
 const midiOutSelect = document.getElementById('midi-out-select');
 
@@ -782,7 +873,7 @@ function updateMIDIDeviceLists() {
         outputs.forEach(o => {
             const op = document.createElement('option');
             op.value = o.id; op.innerText = `${o.name}`;
-            midiOutSelect.appendChild(op);
+            midiOutSelect.appendChild(o);
         });
     }
 
@@ -822,7 +913,7 @@ function sendMidiChord(notesArr, durationSec) {
     });
 }
 
-// --- 10. キーボード＆テンキーイベント ---
+// --- 11. キーボード＆テンキーイベント ---
 window.addEventListener('keydown', (e) => {
     initAudio();
     if (e.repeat) return;
