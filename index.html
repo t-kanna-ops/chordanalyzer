@@ -81,7 +81,7 @@
         .pool-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
         .pool-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .pool-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-        .pool-box { border: 2px dashed #555; background: #2a2a2a; height: 65px; border-radius: 6px; text-align: center; padding: 6px; font-size: 11px; transition: background 0.2s; }
+        .pool-box { border: 2px dashed #555; background: #2a2a2a; height: 65px; border-radius: 6px; text-align: center; padding: 6px; font-size: 11px; transition: background 0.2s; cursor: pointer; }
         .pool-box.dragover { border-color: #ff9800; background: #333; }
         .pool-box.active-play { border-color: #4caf50; background: #1b3e1d; }
         .pool-box .num { font-weight: bold; color: #aaa; }
@@ -181,7 +181,7 @@
     <!-- テンキー用コードプール ＆ 再生コントロール -->
     <div class="panel">
         <div class="pool-header">
-            <strong>コードプール (ドラッグ＆ドロップ保存 / テンキー1〜9, 0でコード発音)</strong>
+            <strong>コードプール (ドラッグ＆ドロップ保存 / テンキー1〜9, 0でコード発音・ベース音付与)</strong>
             <div class="pool-controls">
                 <button id="pool-play-btn" class="btn play-btn" onclick="togglePoolPlayback()">▶ 再生</button>
                 <div style="display:flex; align-items:center; gap:6px; font-size:12px;">
@@ -333,7 +333,6 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
     const bassPc = bassNote.pc;
     const pitchClasses = Array.from(new Set(notesArr.map(n => Tonal.Note.get(n).pc)));
 
-    // 1. 入力音符群単体で「転回形」を考慮した最も自然なコードを解析
     let candidates = [];
     pitchClasses.forEach(root => {
         const otherPcs = pitchClasses.filter(pc => Tonal.Note.chroma(pc) !== Tonal.Note.chroma(root));
@@ -370,7 +369,6 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
     let finalChordSymbol = "判定不能";
 
     if (candidates.length > 0) {
-        // 自然さのスコアリング（メジャー・マイナーなど標準的なコードを優先）
         candidates.forEach(cand => {
             let score = 50;
             const type = (cand.chordObj.type || "").toLowerCase();
@@ -390,17 +388,15 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
 
         candidates.sort((a, b) => b.score - a.score);
         const bestBase = candidates[0];
-        let baseSymbol = bestBase.symbol.replace(/maj$/, 'M'); // 表記の最適化 (例: Cmaj -> CM)
+        let baseSymbol = bestBase.symbol.replace(/maj$/, 'M');
 
         if (forcedRoot === "AUTO") {
-            // 最低音がルートと異なる場合は転回形（分数コード）表記
             if (Tonal.Note.chroma(bassPc) !== Tonal.Note.chroma(bestBase.root)) {
                 finalChordSymbol = `${baseSymbol}/${bassPc}`;
             } else {
                 finalChordSymbol = baseSymbol;
             }
         } else {
-            // ルート指定あり: 入力音の最も自然なコードに指定ルートを適用
             if (Tonal.Note.chroma(forcedRoot) === Tonal.Note.chroma(bestBase.root)) {
                 finalChordSymbol = baseSymbol;
             } else {
@@ -409,7 +405,6 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
         }
     }
 
-    // 2. スケール判定 (指定ルートに基づき再計算)
     let scaleStr = "該当なし";
     if (forcedRoot === "AUTO") {
         const detectedScales = Tonal.Scale.detect(pitchClasses) || [];
@@ -435,7 +430,6 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
         }
         scaleStr = topScales.length > 0 ? topScales.join(', ') : "該当なし";
     } else {
-        // ルート指定時はそのルートから始まるスケールを優先検索
         const commonScaleTypes = [
             "major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
             "harmonic minor", "melodic minor", "major pentatonic", "minor pentatonic", "blues"
@@ -457,7 +451,7 @@ function analyzeChordAndScale(notesArr, forcedRoot) {
                 });
 
                 let score = matchCount * 20;
-                if (matchCount === targetChromaSet.size) score += 50; // 全音包含
+                if (matchCount === targetChromaSet.size) score += 50;
                 if (["major", "minor", "dorian", "mixolydian", "lydian"].includes(type)) score += 10;
 
                 candidates.push({ name: scaleName, score: score });
@@ -732,7 +726,58 @@ function clearHistory() {
     updateAll();
 }
 
-// --- 9. テンキープール ＆ 再生コントロール ---
+// --- 9. コードプール計算・再生処理 (ベース音 C2〜B2 自動付与) ---
+function getBaseRootNote(chordSymbol, notes) {
+    if (!chordSymbol || chordSymbol === "---" || typeof Tonal === 'undefined') return null;
+    
+    let rootName = "";
+    if (chordSymbol.includes('/')) {
+        rootName = chordSymbol.split('/')[1].trim();
+    } else {
+        const chordObj = Tonal.Chord.get(chordSymbol);
+        if (chordObj && !chordObj.empty) {
+            rootName = chordObj.root || chordObj.tonic;
+        }
+    }
+    
+    if (!rootName && notes && notes.length > 0) {
+        rootName = Tonal.Note.get(notes[0]).pc;
+    }
+    
+    if (!rootName) return null;
+    const pc = Tonal.Note.get(rootName).pc;
+    return pc ? `${pc}2` : null; // 音域をベース領域 C2〜B2 に固定
+}
+
+function playPoolChord(key, durationStr) {
+    const data = poolData[key];
+    if (!data || !data.notes || data.notes.length === 0) return;
+    
+    initAudio();
+    
+    // ベース音（C2〜B2）の算出
+    const baseRoot = getBaseRootNote(data.chord, data.notes);
+    let playNotes = [...data.notes];
+    
+    if (baseRoot && !playNotes.includes(baseRoot)) {
+        playNotes.unshift(baseRoot); // 最低音としてベース音を追加
+    }
+    
+    // 1. 搭載シンセで音符＋ベース音を発音
+    synth.triggerAttackRelease(playNotes, durationStr);
+
+    // 2. MIDI出力（ベース音含む）
+    const bpm = parseFloat(document.getElementById('pool-bpm').value) || 120;
+    let beatRatio = 1.0;
+    if (durationStr === '1n') beatRatio = 4.0;
+    else if (durationStr === '2n') beatRatio = 2.0;
+    else if (durationStr === '4n') beatRatio = 1.0;
+    else if (durationStr === '8n') beatRatio = 0.5;
+
+    const durationSec = (60 / bpm) * beatRatio;
+    sendMidiChord(playNotes, durationSec * 0.9);
+}
+
 const poolGrid = document.getElementById('pool-grid');
 POOL_KEYS.forEach(num => {
     const box = document.createElement('div');
@@ -740,6 +785,13 @@ POOL_KEYS.forEach(num => {
     box.id = `pool-box-${num}`;
     box.dataset.num = num;
     box.innerHTML = `<span class="num">Num [${num}]</span><span class="chord-val">---</span>`;
+
+    box.onclick = () => {
+        if (poolData[num]) {
+            const durationStr = document.getElementById('pool-duration').value;
+            playPoolChord(num, durationStr);
+        }
+    };
 
     box.ondragover = (e) => { e.preventDefault(); box.classList.add('dragover'); };
     box.ondragleave = () => box.classList.remove('dragover');
@@ -807,9 +859,7 @@ function playPoolStep(stepIndex) {
     const intervalMs = (60 / bpm) * beatRatio * 1000;
 
     if (poolData[key] && poolData[key].notes) {
-        initAudio();
-        synth.triggerAttackRelease(poolData[key].notes, durationStr);
-        sendMidiChord(poolData[key].notes, (intervalMs / 1000) * 0.9);
+        playPoolChord(key, durationStr);
     }
 
     poolPlayTimeout = setTimeout(() => {
@@ -817,14 +867,16 @@ function playPoolStep(stepIndex) {
     }, intervalMs);
 }
 
-// --- 10. Web MIDI API ---
+// --- 10. Web MIDI API (安全なOption要素追加へ修正) ---
 const midiInSelect  = document.getElementById('midi-in-select');
 const midiOutSelect = document.getElementById('midi-out-select');
 
 function setupMIDI() {
     if (!navigator.requestMIDIAccess) {
-        midiInSelect.innerHTML = '<option value="">Web MIDI API 非対応</option>';
-        midiOutSelect.innerHTML = '<option value="">Web MIDI API 非対応</option>';
+        midiInSelect.options.length = 0;
+        midiInSelect.add(new Option("Web MIDI API 非対応", ""));
+        midiOutSelect.options.length = 0;
+        midiOutSelect.add(new Option("Web MIDI API 非対応", ""));
         return;
     }
     navigator.requestMIDIAccess().then(access => {
@@ -832,24 +884,24 @@ function setupMIDI() {
         updateMIDIDeviceLists();
         midiAccessObj.onstatechange = () => updateMIDIDeviceLists();
     }).catch(err => {
-        midiInSelect.innerHTML = `<option value="">制限あり: ${err}</option>`;
-        midiOutSelect.innerHTML = `<option value="">制限あり: ${err}</option>`;
+        midiInSelect.options.length = 0;
+        midiInSelect.add(new Option(`制限あり: ${err}`, ""));
+        midiOutSelect.options.length = 0;
+        midiOutSelect.add(new Option(`制限あり: ${err}`, ""));
     });
 }
 
 function updateMIDIDeviceLists() {
+    if (!midiAccessObj) return;
+
     const inputs = Array.from(midiAccessObj.inputs.values());
-    midiInSelect.innerHTML = '';
+    midiInSelect.options.length = 0;
     if (inputs.length === 0) {
-        midiInSelect.innerHTML = '<option value="">MIDI入力が検出されません</option>';
+        midiInSelect.add(new Option("MIDI入力が検出されません", ""));
     } else {
-        const opt = document.createElement('option');
-        opt.value = ""; opt.innerText = "-- MIDI入力デバイスを選択 --";
-        midiInSelect.appendChild(opt);
+        midiInSelect.add(new Option("-- MIDI入力デバイスを選択 --", ""));
         inputs.forEach(i => {
-            const o = document.createElement('option');
-            o.value = i.id; o.innerText = `${i.name}`;
-            midiInSelect.appendChild(o);
+            midiInSelect.add(new Option(i.name || i.id, i.id));
         });
     }
 
@@ -863,17 +915,13 @@ function updateMIDIDeviceLists() {
     };
 
     const outputs = Array.from(midiAccessObj.outputs.values());
-    midiOutSelect.innerHTML = '';
+    midiOutSelect.options.length = 0;
     if (outputs.length === 0) {
-        midiOutSelect.innerHTML = '<option value="">MIDI出力が検出されません</option>';
+        midiOutSelect.add(new Option("MIDI出力が検出されません", ""));
     } else {
-        const opt = document.createElement('option');
-        opt.value = ""; opt.innerText = "-- MIDI出力デバイスを選択 --";
-        midiOutSelect.appendChild(opt);
+        midiOutSelect.add(new Option("-- MIDI出力デバイスを選択 --", ""));
         outputs.forEach(o => {
-            const op = document.createElement('option');
-            op.value = o.id; op.innerText = `${o.name}`;
-            midiOutSelect.appendChild(o);
+            midiOutSelect.add(new Option(o.name || o.id, o.id));
         });
     }
 
@@ -929,8 +977,7 @@ window.addEventListener('keydown', (e) => {
 
     if (numKey && poolData[numKey]) {
         const durationStr = document.getElementById('pool-duration').value;
-        synth.triggerAttackRelease(poolData[numKey].notes, durationStr);
-        sendMidiChord(poolData[numKey].notes, 1.0);
+        playPoolChord(numKey, durationStr);
     }
 });
 
