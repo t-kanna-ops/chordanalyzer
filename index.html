@@ -6,10 +6,10 @@
     <title>MIDI & Synth Chord Analyzer</title>
     <link rel="shortcut icon" href="#">
 
-    <!-- 1. Tone.js -->
+    <!-- Tone.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 
-    <!-- 2. Tonal.js -->
+    <!-- Tonal.js -->
     <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
     <script>
         if (typeof Tonal === 'undefined') {
@@ -17,19 +17,20 @@
         }
     </script>
 
-    <!-- 3. VexFlow -->
+    <!-- VexFlow -->
     <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
     
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; background: #121212; color: #eee; padding: 20px; margin: 0; }
-        .container { max-width: 980px; margin: 0 auto; }
+        .container { max-width: 1080px; margin: 0 auto; }
         .panel { background: #1e1e1e; padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #333; }
         
+        .midi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         select { background: #2b2b2b; color: #fff; border: 1px solid #555; padding: 8px 12px; border-radius: 4px; font-size: 14px; width: 100%; box-sizing: border-box; }
         
         .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
         .control-group { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
-        .control-group input { cursor: pointer; }
+        .control-group input, .control-group select { cursor: pointer; }
         
         /* 鍵盤UI */
         .keyboard { position: relative; height: 110px; display: flex; user-select: none; margin-top: 10px; overflow-x: auto; }
@@ -41,12 +42,13 @@
         /* メイン五線譜表示 */
         #staff { background: #fff; border-radius: 4px; padding: 5px; height: 130px; user-select: none; }
         
-        /* 8小節履歴グリッド */
-        .history-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
-        .measure-box { background: #fff; border-radius: 4px; height: 110px; position: relative; border: 2px dashed #555; box-sizing: border-box; }
+        /* 8小節履歴 (横幅1/2, 縦幅2倍 = 高さ220px / 横1列) */
+        .history-container { overflow-x: auto; width: 100%; }
+        .history-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 10px; min-width: 800px; }
+        .measure-box { background: #fff; border-radius: 4px; height: 220px; position: relative; border: 2px dashed #555; box-sizing: border-box; }
         .measure-box.dragover { border-color: #ff9800; background: #fff8e1; }
-        .measure-label { position: absolute; top: 3px; left: 6px; font-size: 11px; color: #666; font-weight: bold; z-index: 10; }
-        .measure-chord { position: absolute; top: 3px; right: 6px; font-size: 12px; font-weight: bold; color: #d32f2f; z-index: 10; }
+        .measure-label { position: absolute; top: 3px; left: 4px; font-size: 11px; color: #666; font-weight: bold; z-index: 10; }
+        .measure-chord { position: absolute; top: 3px; right: 4px; font-size: 11px; font-weight: bold; color: #d32f2f; z-index: 10; word-break: break-all; text-align: right; }
 
         /* 結果＆ボタンエリア */
         .result-box { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; }
@@ -56,13 +58,18 @@
         .reset-btn { background: #e53935; color: white; }
         .add-hist-btn { background: #2196f3; color: white; }
         .clear-hist-btn { background: #616161; color: white; font-size: 12px; }
+        .play-btn { background: #4caf50; color: white; }
+        .play-btn.playing { background: #ff9800; }
 
         /* テンキープール (1〜0) */
-        .pool-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 10px; }
-        .pool-box { border: 2px dashed #555; background: #2a2a2a; height: 65px; border-radius: 6px; text-align: center; padding: 6px; font-size: 11px; }
+        .pool-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+        .pool-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .pool-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+        .pool-box { border: 2px dashed #555; background: #2a2a2a; height: 65px; border-radius: 6px; text-align: center; padding: 6px; font-size: 11px; transition: background 0.2s; }
         .pool-box.dragover { border-color: #ff9800; background: #333; }
+        .pool-box.active-play { border-color: #4caf50; background: #1b3e1d; }
         .pool-box .num { font-weight: bold; color: #aaa; }
-        .pool-box .chord-val { display: block; margin-top: 4px; font-size: 15px; color: #4caf50; font-weight: bold; }
+        .pool-box .chord-val { display: block; margin-top: 4px; font-size: 14px; color: #4caf50; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -70,12 +77,22 @@
 <div class="container">
     <h2>MIDI & Synth Chord Analyzer</h2>
 
-    <!-- MIDIデバイス選択 -->
+    <!-- MIDIデバイス選択（入力/出力） -->
     <div class="panel">
-        <label><strong>接続MIDIデバイス選択:</strong></label>
-        <select id="midi-select" style="margin-top: 6px;">
-            <option value="">MIDIデバイスを検出中...</option>
-        </select>
+        <div class="midi-grid">
+            <div>
+                <label><strong>MIDI入力デバイス:</strong></label>
+                <select id="midi-in-select" style="margin-top: 6px;">
+                    <option value="">検出中...</option>
+                </select>
+            </div>
+            <div>
+                <label><strong>MIDI出力デバイス:</strong></label>
+                <select id="midi-out-select" style="margin-top: 6px;">
+                    <option value="">検出中...</option>
+                </select>
+            </div>
+        </div>
     </div>
 
     <!-- シンセパラメーター -->
@@ -90,7 +107,7 @@
         </div>
     </div>
 
-    <!-- 鍵盤UI-->
+    <!-- 鍵盤UI -->
     <div class="panel">
         <strong>鍵盤 (PCキー: awsedftgyhujkolp;:[])</strong>
         <div class="keyboard" id="keyboard"></div>
@@ -98,7 +115,7 @@
 
     <!-- メイン五線譜 -->
     <div class="panel">
-        <strong>現在の入力音符（五線譜上の音符を上下ドラッグで音高移動: 上=# / 下=♭）</strong>
+        <strong>現在の入力音符（全音符を個別ドラッグで移動可能 / 選択された音符は赤色で視覚化）</strong>
         <div id="staff" style="margin-top: 6px;"></div>
     </div>
 
@@ -114,18 +131,39 @@
         </div>
     </div>
 
-    <!-- 8小節コード履歴 -->
+    <!-- 8小節コード履歴（横一列・縦長レイアウト） -->
     <div class="panel">
-        <div style="display:flex; justify-style:space-between; align-items:center;">
-            <strong>8小節コード履歴 (ドラッグ＆ドロップ保存 / 判定リセットで消去されません)</strong>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>8小節コード履歴 (ドラッグ＆ドロップ保存 / 8小節横1列表示)</strong>
             <button class="btn clear-hist-btn" onclick="clearHistory()">履歴全消去</button>
         </div>
-        <div class="history-grid" id="history-grid"></div>
+        <div class="history-container">
+            <div class="history-grid" id="history-grid"></div>
+        </div>
     </div>
 
-    <!-- テンキー用コードプール -->
+    <!-- テンキー用コードプール ＆ 再生コントロール -->
     <div class="panel">
-        <strong>コードプール (ドラッグ＆ドロップ保存 / テンキー1〜9, 0でコード発音)</strong>
+        <div class="pool-header">
+            <strong>コードプール (ドラッグ＆ドロップ保存 / テンキー1〜9, 0でコード発音)</strong>
+            <div class="pool-controls">
+                <button id="pool-play-btn" class="btn play-btn" onclick="togglePoolPlayback()">▶ 再生</button>
+                <div style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                    <label>BPM:</label>
+                    <input type="range" id="pool-bpm" min="30" max="300" value="120" style="width:80px;" oninput="document.getElementById('bpm-val').innerText = this.value">
+                    <span id="bpm-val">120</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                    <label>音価:</label>
+                    <select id="pool-duration" style="width:auto; padding:4px 8px;">
+                        <option value="1n">全音符</option>
+                        <option value="2n">2分音符</option>
+                        <option value="4n" selected>4分音符</option>
+                        <option value="8n">8分音符</option>
+                    </select>
+                </div>
+            </div>
+        </div>
         <div class="pool-grid" id="pool-grid"></div>
     </div>
 </div>
@@ -135,6 +173,7 @@
 const NOTES = ['C4','C#4','D4','D#4','E4','F4','F#4','G4','G#4','A4','A#4','B4','C5','C#5','D5','D#5','E5','F5','F#5','G5'];
 const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+const POOL_KEYS   = ['1','2','3','4','5','6','7','8','9','0'];
 
 const PC_KEY_MAP = {
     'a':'C4', 'w':'C#4', 's':'D4', 'e':'D#4', 'd':'E4', 'f':'F4',
@@ -144,11 +183,17 @@ const PC_KEY_MAP = {
 };
 
 let activeNotes = new Set();
+let selectedNoteName = null; // 五線譜上で選択された音符
 let chordHistory = new Array(8).fill(null);
 let poolData = {}; 
 let synth, filter;
+
 let midiAccessObj = null;
 let currentMidiInput = null;
+let currentMidiOutput = null;
+
+let isPlayingPool = false;
+let poolPlayTimeout = null;
 
 // --- VexFlow用 音名安全変換処理 ---
 function parseNoteForVex(noteStr) {
@@ -157,10 +202,7 @@ function parseNoteForVex(noteStr) {
     const letter = (p.letter || 'C').toLowerCase();
     const acc = p.acc || ''; 
     const oct = (p.oct !== undefined && p.oct !== null) ? p.oct : 4;
-    return {
-        key: `${letter}${acc}/${oct}`,
-        acc: acc
-    };
+    return { key: `${letter}${acc}/${oct}`, acc: acc };
 }
 
 // --- 1. Tone.js オーディオ初期化 ---
@@ -188,26 +230,30 @@ NOTES.forEach(note => {
     keyEl.className = `key ${isBlack ? 'black' : 'white'}`;
     keyEl.dataset.note = note;
     keyEl.innerText = note;
-    keyEl.onmousedown = () => { initAudio(); playNote(note); };
-    keyEl.onmouseup = () => stopNote(note);
+    keyEl.onmousedown = () => toggleNote(note);
     keyboardEl.appendChild(keyEl);
 });
 
-// --- 3. ノート発音・制御 ---
-function playNote(note) {
+// --- 3. ノート発音・制御 (同じ鍵盤で削除するトグル方式) ---
+function toggleNote(note) {
     initAudio();
-    synth.triggerAttack(note);
-    activeNotes.add(note);
+    if (activeNotes.has(note)) {
+        activeNotes.delete(note);
+        synth.triggerRelease(note);
+        if (selectedNoteName === note) selectedNoteName = null;
+    } else {
+        activeNotes.add(note);
+        synth.triggerAttack(note);
+        selectedNoteName = note;
+        sendMidiNote(note, true);
+    }
     updateAll();
-}
-
-function stopNote(note) {
-    if (synth) synth.triggerRelease(note);
 }
 
 function resetNotes() {
     if (synth) synth.releaseAll();
     activeNotes.clear();
+    selectedNoteName = null;
     updateAll();
 }
 
@@ -255,7 +301,7 @@ function updateAll() {
     renderHistoryGrid();
 }
 
-// --- 5. メイン五線譜描画 ＆ 音符のドラッグ操作 ---
+// --- 5. メイン五線譜描画 (個別音符ドラッグ＆ターゲット選択視覚化) ---
 function renderMainStaff(notes) {
     const staffDiv = document.getElementById('staff');
     staffDiv.innerHTML = "";
@@ -264,9 +310,9 @@ function renderMainStaff(notes) {
     const { Renderer, Stave, StaveNote, Voice, Formatter, Accidental } = Vex.Flow;
     
     const renderer = new Renderer(staffDiv, Renderer.Backends.SVG);
-    renderer.resize(920, 120);
+    renderer.resize(980, 120);
     const context = renderer.getContext();
-    const stave = new Stave(10, 0, 890);
+    const stave = new Stave(10, 0, 950);
     stave.addClef("treble").setContext(context).draw();
 
     if (notes.length === 0) return;
@@ -282,37 +328,46 @@ function renderMainStaff(notes) {
 
         const voice = new Voice({ num_beats: 4, beat_value: 4 });
         voice.addTickables([staveNote]);
-        
-        // Formatterメソッド呼び出しの修正箇所
         new Formatter().joinVoices([voice]).format([voice], 400);
         voice.draw(context, stave);
 
-        // 音符の上下ドラッグ移動イベント
-        const noteElements = staffDiv.querySelectorAll('.vf-stavenote');
-        noteElements.forEach((el) => {
-            el.style.cursor = 'ns-resize';
-            el.onmousedown = (e) => {
+        // 各音符 (NoteHead) のドラッグ＆ドロップおよび選択処理
+        const noteHeads = staffDiv.querySelectorAll('.vf-notehead');
+        noteHeads.forEach((headEl, idx) => {
+            const currentNote = notes[idx];
+            headEl.style.cursor = 'ns-resize';
+
+            // ターゲット選択されている音符を赤色ハイライト
+            if (currentNote === selectedNoteName) {
+                headEl.querySelectorAll('path').forEach(p => p.setAttribute('fill', '#ff4d4d'));
+            }
+
+            headEl.onmousedown = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                selectedNoteName = currentNote;
+                updateAll(); // 選択ターゲットを即座に赤色に更新
+
                 const startY = e.clientY;
+                const initialMidi = Tonal.Note.midi(currentNote);
 
                 const onMouseMove = (moveEvt) => {
                     const diffY = startY - moveEvt.clientY;
                     const semitoneShift = Math.round(diffY / 12);
 
-                    if (semitoneShift !== 0 && notes.length > 0) {
+                    if (semitoneShift !== 0 && initialMidi) {
                         const direction = semitoneShift > 0 ? 'up' : 'down';
-                        const currentNoteName = notes[0];
-                        const currentMidi = Tonal.Note.midi(currentNoteName);
-                        if (currentMidi) {
-                            const newMidi = currentMidi + (semitoneShift > 0 ? 1 : -1);
-                            const newNoteName = midiToNoteName(newMidi, direction);
+                        const newMidi = initialMidi + semitoneShift;
+                        const newNoteName = midiToNoteName(newMidi, direction);
 
-                            activeNotes.delete(currentNoteName);
+                        if (newNoteName !== currentNote && !activeNotes.has(newNoteName)) {
+                            activeNotes.delete(currentNote);
                             activeNotes.add(newNoteName);
+                            selectedNoteName = newNoteName;
 
                             initAudio();
                             synth.triggerAttackRelease(newNoteName, "8n");
+                            sendMidiNote(newNoteName, true);
 
                             window.removeEventListener('mousemove', onMouseMove);
                             window.removeEventListener('mouseup', onMouseUp);
@@ -336,7 +391,7 @@ function renderMainStaff(notes) {
     }
 }
 
-// --- 6. 8小節コード履歴エリア ---
+// --- 6. 8小節コード履歴 (縦長220px・横1列表示) ---
 const historyGrid = document.getElementById('history-grid');
 
 function renderHistoryGrid() {
@@ -379,9 +434,9 @@ function renderHistoryGrid() {
         if (data && data.notes && data.notes.length > 0) {
             try {
                 const renderer = new Renderer(box, Renderer.Backends.SVG);
-                renderer.resize(210, 100);
+                renderer.resize(110, 200);
                 const context = renderer.getContext();
-                const stave = new Stave(0, 10, 200);
+                const stave = new Stave(0, 30, 100);
                 stave.setContext(context).draw();
 
                 const parsedNotes = data.notes.map(parseNoteForVex);
@@ -394,9 +449,7 @@ function renderHistoryGrid() {
 
                 const voice = new Voice({ num_beats: 4, beat_value: 4 });
                 voice.addTickables([staveNote]);
-                
-                // Formatterメソッド呼び出しの修正箇所
-                new Formatter().joinVoices([voice]).format([voice], 120);
+                new Formatter().joinVoices([voice]).format([voice], 60);
                 voice.draw(context, stave);
             } catch(err) {}
         }
@@ -419,11 +472,12 @@ function clearHistory() {
     updateAll();
 }
 
-// --- 7. テンキープール (1〜9, 0) ---
+// --- 7. テンキープール (1〜9, 0) ＆ 再生処理 ---
 const poolGrid = document.getElementById('pool-grid');
-['1','2','3','4','5','6','7','8','9','0'].forEach(num => {
+POOL_KEYS.forEach(num => {
     const box = document.createElement('div');
     box.className = 'pool-box';
+    box.id = `pool-box-${num}`;
     box.dataset.num = num;
     box.innerHTML = `<span class="num">Num [${num}]</span><span class="chord-val">---</span>`;
 
@@ -447,51 +501,128 @@ document.getElementById('chord-drag').ondragstart = (e) => {
     e.dataTransfer.setData('text/plain', JSON.stringify({ chord: chordName, notes: notesArr }));
 };
 
-// --- 8. Web MIDI API ---
-const midiSelect = document.getElementById('midi-select');
+// プール順次再生処理
+function togglePoolPlayback() {
+    const btn = document.getElementById('pool-play-btn');
+    if (isPlayingPool) {
+        stopPoolPlayback();
+    } else {
+        isPlayingPool = true;
+        btn.innerText = "■ 停止";
+        btn.classList.add('playing');
+        playPoolStep(0);
+    }
+}
+
+function stopPoolPlayback() {
+    isPlayingPool = false;
+    if (poolPlayTimeout) clearTimeout(poolPlayTimeout);
+    const btn = document.getElementById('pool-play-btn');
+    btn.innerText = "▶ 再生";
+    btn.classList.remove('playing');
+    document.querySelectorAll('.pool-box').forEach(b => b.classList.remove('active-play'));
+}
+
+function playPoolStep(stepIndex) {
+    if (!isPlayingPool) return;
+
+    if (stepIndex >= POOL_KEYS.length) {
+        stopPoolPlayback();
+        return;
+    }
+
+    const key = POOL_KEYS[stepIndex];
+    document.querySelectorAll('.pool-box').forEach(b => b.classList.remove('active-play'));
+    const currentBox = document.getElementById(`pool-box-${key}`);
+    if (currentBox) currentBox.classList.add('active-play');
+
+    const bpm = parseFloat(document.getElementById('pool-bpm').value) || 120;
+    const durationStr = document.getElementById('pool-duration').value;
+    
+    // 音価計算
+    let beatRatio = 1.0;
+    if (durationStr === '1n') beatRatio = 4.0;
+    else if (durationStr === '2n') beatRatio = 2.0;
+    else if (durationStr === '4n') beatRatio = 1.0;
+    else if (durationStr === '8n') beatRatio = 0.5;
+
+    const intervalMs = (60 / bpm) * beatRatio * 1000;
+
+    if (poolData[key] && poolData[key].notes) {
+        initAudio();
+        synth.triggerAttackRelease(poolData[key].notes, durationStr);
+        sendMidiChord(poolData[key].notes, (intervalMs / 1000) * 0.9);
+    }
+
+    poolPlayTimeout = setTimeout(() => {
+        playPoolStep(stepIndex + 1);
+    }, intervalMs);
+}
+
+// --- 8. Web MIDI API (入力/出力を分離選択) ---
+const midiInSelect  = document.getElementById('midi-in-select');
+const midiOutSelect = document.getElementById('midi-out-select');
 
 function setupMIDI() {
     if (!navigator.requestMIDIAccess) {
-        midiSelect.innerHTML = '<option value="">Web MIDI API 非対応環境です</option>';
+        midiInSelect.innerHTML = '<option value="">Web MIDI API 非対応</option>';
+        midiOutSelect.innerHTML = '<option value="">Web MIDI API 非対応</option>';
         return;
     }
     navigator.requestMIDIAccess().then(access => {
         midiAccessObj = access;
-        updateMIDIDeviceList();
-        midiAccessObj.onstatechange = () => updateMIDIDeviceList();
+        updateMIDIDeviceLists();
+        midiAccessObj.onstatechange = () => updateMIDIDeviceLists();
     }).catch(err => {
-        midiSelect.innerHTML = `<option value="">MIDI接続制限: ${err}</option>`;
+        midiInSelect.innerHTML = `<option value="">制限あり: ${err}</option>`;
+        midiOutSelect.innerHTML = `<option value="">制限あり: ${err}</option>`;
     });
 }
 
-function updateMIDIDeviceList() {
+function updateMIDIDeviceLists() {
+    // 入力デバイス設定
     const inputs = Array.from(midiAccessObj.inputs.values());
-    midiSelect.innerHTML = '';
-
+    midiInSelect.innerHTML = '';
     if (inputs.length === 0) {
-        midiSelect.innerHTML = '<option value="">MIDIデバイスが検出されません</option>';
-        return;
+        midiInSelect.innerHTML = '<option value="">MIDI入力が検出されません</option>';
+    } else {
+        const opt = document.createElement('option');
+        opt.value = ""; opt.innerText = "-- MIDI入力デバイスを選択 --";
+        midiInSelect.appendChild(opt);
+        inputs.forEach(i => {
+            const o = document.createElement('option');
+            o.value = i.id; o.innerText = `${i.name}`;
+            midiInSelect.appendChild(o);
+        });
     }
 
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = "";
-    defaultOpt.innerText = "-- 使用するMIDIデバイスを選択してください --";
-    midiSelect.appendChild(defaultOpt);
-
-    inputs.forEach(input => {
-        const opt = document.createElement('option');
-        opt.value = input.id;
-        opt.innerText = `${input.name} (${input.manufacturer || '汎用MIDI機器'})`;
-        midiSelect.appendChild(opt);
-    });
-
-    midiSelect.onchange = () => {
+    midiInSelect.onchange = () => {
         if (currentMidiInput) currentMidiInput.onmidimessage = null;
-        const selectedInput = inputs.find(i => i.id === midiSelect.value);
-        if (selectedInput) {
-            currentMidiInput = selectedInput;
+        const selected = inputs.find(i => i.id === midiInSelect.value);
+        if (selected) {
+            currentMidiInput = selected;
             currentMidiInput.onmidimessage = handleMIDIMessage;
         }
+    };
+
+    // 出力デバイス設定
+    const outputs = Array.from(midiAccessObj.outputs.values());
+    midiOutSelect.innerHTML = '';
+    if (outputs.length === 0) {
+        midiOutSelect.innerHTML = '<option value="">MIDI出力が検出されません</option>';
+    } else {
+        const opt = document.createElement('option');
+        opt.value = ""; opt.innerText = "-- MIDI出力デバイスを選択 --";
+        midiOutSelect.appendChild(opt);
+        outputs.forEach(o => {
+            const op = document.createElement('option');
+            op.value = o.id; op.innerText = `${o.name}`;
+            midiOutSelect.appendChild(op);
+        });
+    }
+
+    midiOutSelect.onchange = () => {
+        currentMidiOutput = outputs.find(o => o.id === midiOutSelect.value) || null;
     };
 }
 
@@ -499,8 +630,32 @@ function handleMIDIMessage(msg) {
     const [status, noteNum, velocity] = msg.data;
     const command = status >> 4;
     const noteName = Tonal.Note.fromMidi(noteNum);
-    if (command === 9 && velocity > 0) playNote(noteName);
-    else if (command === 8 || (command === 9 && velocity === 0)) stopNote(noteName);
+    if (command === 9 && velocity > 0) {
+        toggleNote(noteName);
+    }
+}
+
+// MIDI出力送信処理
+function sendMidiNote(noteName, isOn) {
+    if (!currentMidiOutput) return;
+    const midiNum = Tonal.Note.midi(noteName);
+    if (midiNum !== null) {
+        const cmd = isOn ? 0x90 : 0x80;
+        currentMidiOutput.send([cmd, midiNum, isOn ? 0x7f : 0x00]);
+    }
+}
+
+function sendMidiChord(notesArr, durationSec) {
+    if (!currentMidiOutput || !notesArr || notesArr.length === 0) return;
+    notesArr.forEach(noteName => {
+        const midiNum = Tonal.Note.midi(noteName);
+        if (midiNum !== null) {
+            currentMidiOutput.send([0x90, midiNum, 0x7f]);
+            setTimeout(() => {
+                currentMidiOutput.send([0x80, midiNum, 0x00]);
+            }, durationSec * 1000);
+        }
+    });
 }
 
 // --- 9. キーボード＆テンキーイベント ---
@@ -510,22 +665,17 @@ window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
 
     if (PC_KEY_MAP[key]) {
-        playNote(PC_KEY_MAP[key]);
+        toggleNote(PC_KEY_MAP[key]);
     }
 
     let numKey = null;
     if (e.code.startsWith('Numpad')) numKey = e.code.replace('Numpad', '');
-    else if (['1','2','3','4','5','6','7','8','9','0'].includes(e.key)) numKey = e.key;
+    else if (POOL_KEYS.includes(e.key)) numKey = e.key;
 
     if (numKey && poolData[numKey]) {
-        synth.triggerAttackRelease(poolData[numKey].notes, "1m");
-    }
-});
-
-window.addEventListener('keyup', (e) => {
-    const key = e.key.toLowerCase();
-    if (PC_KEY_MAP[key]) {
-        stopNote(PC_KEY_MAP[key]);
+        const durationStr = document.getElementById('pool-duration').value;
+        synth.triggerAttackRelease(poolData[numKey].notes, durationStr);
+        sendMidiChord(poolData[numKey].notes, 1.0);
     }
 });
 
